@@ -99,8 +99,6 @@ final class ExecuteUpdateSpec
       )
     ).thenReturn(mockedPreparedInsert)
 
-    when(dao.storeTransactionState(mockedPreparedInsert)(loggingContext))
-      .thenReturn(Future.successful(PersistenceResponse.Ok))
     when(dao.storeTransactionEvents(mockedPreparedInsert)(loggingContext))
       .thenReturn(Future.successful(PersistenceResponse.Ok))
     when(
@@ -234,9 +232,6 @@ final class ExecuteUpdateSpec
                     divulgedContracts = List.empty[DivulgedContract],
                     blindingInfo = None,
                   )
-                orderedEvents
-                  .verify(ledgerDaoMock)
-                  .storeTransactionState(eqTo(mockedPreparedInsert))(any[LoggingContext])
                 orderedEvents
                   .verify(ledgerDaoMock)
                   .storeTransactionEvents(eqTo(mockedPreparedInsert))(any[LoggingContext])

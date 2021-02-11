@@ -23,13 +23,15 @@ import scala.concurrent.{ExecutionContext, Future}
 /** @see [[ContractsTable]]
   */
 private[dao] sealed class ContractsReader(
-    val committedContracts: PostCommitValidationData,
+
     dispatcher: DbDispatcher,
     metrics: Metrics,
     lfValueTranslationCache: LfValueTranslation.Cache,
     sqlFunctions: SqlFunctions,
 )(implicit ec: ExecutionContext)
     extends ContractStore {
+
+  val committedContracts: PostCommitValidationData = ContractsTable
 
   import ContractsReader._
 
@@ -135,7 +137,6 @@ private[dao] object ContractsReader {
       case DbType.H2Database => H2SqlFunctions
     }
     new ContractsReader(
-      committedContracts = ContractsTable(dbType),
       dispatcher = dispatcher,
       metrics = metrics,
       lfValueTranslationCache = lfValueTranslationCache,
