@@ -77,12 +77,12 @@ private[platform] final class TransactionsWriter(
           lfValueTranslation,
           transactionId,
           indexing.events.events,
-          indexing.contracts.divulgedContracts,
+          divulgedContracts,
         ),
       )
 
     new TransactionsWriter.PreparedInsert(
-      eventsTable.toExecutables(indexing.transaction, indexing.events, serialized)
+      eventsTable.toExecutables(indexing.transaction, indexing.events, indexing.contracts, serialized)
     )
   }
 

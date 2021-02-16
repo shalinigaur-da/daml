@@ -11,6 +11,7 @@ import com.daml.ledger.{EventId, TransactionId}
 import com.daml.ledger.participant.state.v1.{Offset, SubmitterInfo, WorkflowId}
 import com.daml.platform.store.Conversions._
 
+// TODO add support for H2
 object EventsTableH2Database extends EventsTable {
 
   final class Batches(insertEvents: Option[BatchSql], updateArchives: Option[BatchSql])
@@ -171,15 +172,16 @@ object EventsTableH2Database extends EventsTable {
   private val updateArchived =
     """update participant_events set create_consumed_at={consumed_at} where contract_id={contract_id} and create_argument is not null"""
 
-  private def archive(consumedAt: Offset)(contractId: ContractId): Vector[NamedParameter] =
-    Vector[NamedParameter](
-      "consumed_at" -> consumedAt,
-      "contract_id" -> contractId.coid,
-    )
+//  private def archive(consumedAt: Offset)(contractId: ContractId): Vector[NamedParameter] =
+//    Vector[NamedParameter](
+//      "consumed_at" -> consumedAt,
+//      "contract_id" -> contractId.coid,
+//    )
 
   def toExecutables(
       tx: TransactionIndexing.TransactionInfo,
       info: TransactionIndexing.EventsInfo,
+      contractInfo: TransactionIndexing.ContractsInfo,
       serialized: TransactionIndexing.Serialized,
   ): EventsTable.Batches = {
 
@@ -198,8 +200,8 @@ object EventsTableH2Database extends EventsTable {
       exerciseResults = serialized.exerciseResults,
     )
 
-    val archivals =
-      info.archives.iterator.map(archive(tx.offset)).toList
+    val archivals = Nil
+      //info.archives.iterator.map(archive(tx.offset)).toList
 
     new Batches(
       insertEvents = batch(insertEvent, events),

@@ -6,22 +6,14 @@ package com.daml.platform.store.dao.events
 import java.time.Instant
 
 import com.daml.ledger.{TransactionId, WorkflowId}
-import com.daml.ledger.participant.state.v1.{
-  CommittedTransaction,
-  DivulgedContract,
-  Offset,
-  SubmitterInfo,
-}
+import com.daml.ledger.participant.state.v1.{CommittedTransaction, ContractInst, DivulgedContract, Offset, SubmitterInfo}
 import com.daml.lf.ledger.EventId
 import com.daml.lf.transaction.BlindingInfo
-
-import scala.collection.compat._
 
 final case class TransactionIndexing(
     transaction: TransactionIndexing.TransactionInfo,
     events: TransactionIndexing.EventsInfo,
     contracts: TransactionIndexing.ContractsInfo,
-    contractWitnesses: TransactionIndexing.ContractWitnessesInfo,
 )
 
 object TransactionIndexing {
@@ -36,6 +28,7 @@ object TransactionIndexing {
     val createArgumentsByContract = Map.newBuilder[ContractId, Array[Byte]]
     val createArguments = Map.newBuilder[NodeId, Array[Byte]]
     val createKeyValues = Map.newBuilder[NodeId, Array[Byte]]
+    val createKeyHashes = Map.newBuilder[NodeId, Array[Byte]]
     val exerciseArguments = Map.newBuilder[NodeId, Array[Byte]]
     val exerciseResults = Map.newBuilder[NodeId, Array[Byte]]
 
@@ -47,6 +40,10 @@ object TransactionIndexing {
           createArgumentsByContract += ((create.coid, createArgument))
           createArguments += ((nodeId, createArgument))
           createKeyValue.foreach(key => createKeyValues += ((nodeId, key)))
+          createKeyValue.foreach(_ => createKeyHashes += ((nodeId, create.key
+            .map(convertLfValueKey(create.templateId, _))
+            .map(_.hash.bytes.toByteArray)
+            .orNull)))
         case exercise: Exercise =>
           val (exerciseArgument, exerciseResult) = translation.serialize(eventId, exercise)
           exerciseArguments += ((nodeId, exerciseArgument))
@@ -64,6 +61,7 @@ object TransactionIndexing {
       createArgumentsByContract = createArgumentsByContract.result(),
       createArguments = createArguments.result(),
       createKeyValues = createKeyValues.result(),
+      createKeyHashes = createKeyHashes.result(),
       exerciseArguments = exerciseArguments.result(),
       exerciseResults = exerciseResults.result(),
     )
@@ -73,34 +71,13 @@ object TransactionIndexing {
   private class Builder(blinding: BlindingInfo) {
 
     private val events = Vector.newBuilder[(NodeId, Node)]
-    private val creates = Set.newBuilder[Create]
-    private val archives = Set.newBuilder[ContractId]
     private val stakeholders = Map.newBuilder[NodeId, Set[Party]]
     private val disclosure = Map.newBuilder[NodeId, Set[Party]]
-    private val visibility = Vector.newBuilder[(ContractId, Set[Party])]
-
-    for (contractId <- blinding.divulgence.keys) {
-      addDivulgence(contractId)
-    }
 
     private def addEventAndDisclosure(event: (NodeId, Node)): Unit = {
       events += event
       disclosure += ((event._1, blinding.disclosure(event._1)))
     }
-
-    private def addCreate(create: Create): Unit =
-      creates += create
-
-    private def addArchive(contractId: ContractId): Unit =
-      archives += contractId
-
-    private def addDivulgence(contractId: ContractId): Unit =
-      for (divulgees <- blinding.divulgence.get(contractId)) {
-        visibility += ((contractId, divulgees))
-      }
-
-    private def addVisibility(contractId: ContractId, parties: Set[Party]): Unit =
-      visibility += ((contractId, parties))
 
     private def addStakeholders(nodeId: NodeId, parties: Set[Party]): Unit =
       stakeholders += ((nodeId, parties))
@@ -109,16 +86,11 @@ object TransactionIndexing {
       event match {
         case (nodeId, create: Create) =>
           addEventAndDisclosure(event)
-          addVisibility(create.coid, blinding.disclosure(nodeId))
           addStakeholders(nodeId, create.stakeholders)
-          addCreate(create)
         case (nodeId, exercise: Exercise) =>
           addEventAndDisclosure(event)
-          addVisibility(exercise.targetCoid, blinding.disclosure(nodeId))
-          addDivulgence(exercise.targetCoid)
           if (exercise.consuming) {
             addStakeholders(nodeId, exercise.stakeholders)
-            addArchive(exercise.targetCoid)
           } else {
             addStakeholders(nodeId, Set.empty)
           }
@@ -128,11 +100,6 @@ object TransactionIndexing {
       this
     }
 
-    private def visibility(contracts: Iterable[DivulgedContract]): WitnessRelation[ContractId] =
-      Relation.from(
-        contracts.map(c => c.contractId -> blinding.divulgence.getOrElse(c.contractId, Set.empty))
-      )
-
     def build(
         submitterInfo: Option[SubmitterInfo],
         workflowId: Option[WorkflowId],
@@ -141,16 +108,17 @@ object TransactionIndexing {
         offset: Offset,
         divulgedContracts: Iterable[DivulgedContract],
     ): TransactionIndexing = {
-      val created = creates.result()
-      val archived = archives.result()
-      val allCreatedContractIds = created.map(_.coid)
-      val allContractIds = allCreatedContractIds.union(archived)
-      val netCreates = created.filterNot(c => archived(c.coid))
-      val netArchives = archived.filterNot(allCreatedContractIds)
-      val netDivulgedContracts = divulgedContracts.filterNot(c => allContractIds(c.contractId))
-      val netTransactionVisibility =
-        Relation.from(visibility.result()).view.filterKeys(!archived(_)).toMap
-      val netVisibility = Relation.union(netTransactionVisibility, visibility(netDivulgedContracts))
+      val divulgedContractIndex = divulgedContracts
+        .map(divulgedContract => divulgedContract.contractId -> divulgedContract)
+        .toMap
+      val netDivulged = blinding.divulgence.map {
+        case (contractId, visibleToParties) =>
+          TransactionDivulgedContract(
+            contractId = contractId,
+            contractInst = divulgedContractIndex.get(contractId).map(_.contractInst),
+            visibility = visibleToParties
+          )
+      }
       TransactionIndexing(
         transaction = TransactionInfo(
           submitterInfo = submitterInfo,
@@ -161,18 +129,11 @@ object TransactionIndexing {
         ),
         events = EventsInfo(
           events = events.result(),
-          archives = archived,
           stakeholders = stakeholders.result(),
           disclosure = disclosure.result(),
         ),
         contracts = ContractsInfo(
-          netCreates = netCreates,
-          netArchives = netArchives,
-          divulgedContracts = netDivulgedContracts,
-        ),
-        contractWitnesses = ContractWitnessesInfo(
-          netArchives = netArchives,
-          netVisibility = netVisibility,
+          divulgedContracts = netDivulged,
         ),
       )
     }
@@ -188,15 +149,19 @@ object TransactionIndexing {
 
   final case class EventsInfo(
       events: Vector[(NodeId, Node)],
-      archives: Set[ContractId],
       stakeholders: WitnessRelation[NodeId],
       disclosure: WitnessRelation[NodeId],
   )
 
+  // most involved change: divulgence is now an event instead encoded in contract/contract_witness tables
+  // also we generate these events directly as part of the other events, so we need to land the necessery
+  // data in the EventsTablePostgresql
+  case class TransactionDivulgedContract(contractId: ContractId,
+                                         contractInst: Option[ContractInst], // this we do not necessarily have: for public KV ledgers the divulged contract list is empty, since all contracts must be at all ledger as create nodes already
+                                         visibility: Set[Party])
+
   final case class ContractsInfo(
-      netCreates: Set[Create],
-      netArchives: Set[ContractId],
-      divulgedContracts: Iterable[DivulgedContract],
+      divulgedContracts: Iterable[TransactionDivulgedContract],
   )
 
   final case class ContractWitnessesInfo(
@@ -208,6 +173,7 @@ object TransactionIndexing {
       createArgumentsByContract: Map[ContractId, Array[Byte]],
       createArguments: Map[NodeId, Array[Byte]],
       createKeyValues: Map[NodeId, Array[Byte]],
+      createKeyHashes: Map[NodeId, Array[Byte]],
       exerciseArguments: Map[NodeId, Array[Byte]],
       exerciseResults: Map[NodeId, Array[Byte]],
   )

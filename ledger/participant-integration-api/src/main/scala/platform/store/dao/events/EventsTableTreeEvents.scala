@@ -84,7 +84,7 @@ private[events] object EventsTableTreeEvents {
     "create_observers",
     "create_agreement_text",
     "create_key_value",
-    "exercise_consuming",
+    "event_kind = 20 as exercise_consuming", // since we removed the exercise_consuming column, we know derive the informationf from the event_kind
     "exercise_choice",
     "exercise_argument",
     "exercise_result",
@@ -108,7 +108,7 @@ private[events] object EventsTableTreeEvents {
     val witnessesWhereClause =
       sqlFunctions.arrayIntersectionWhereClause("tree_event_witnesses", requestingParty)
     SQL"""select #$selectColumns, array[$requestingParty] as event_witnesses,
-                 case when submitters = array[$requestingParty] then command_id else '' end as command_id
+                 case when submitters = array[$requestingParty]::text[] then command_id else '' end as command_id
           from participant_events
           join parameters on
               (participant_pruned_up_to_inclusive is null or event_offset > participant_pruned_up_to_inclusive)
@@ -157,7 +157,7 @@ private[events] object EventsTableTreeEvents {
     EventsRange.readPage(
       read = (range, limitExpr) => SQL"""
         select #$selectColumns, array[$requestingParty] as event_witnesses,
-               case when submitters = array[$requestingParty] then command_id else '' end as command_id
+               case when submitters = array[$requestingParty]::text[] then command_id else '' end as command_id
         from participant_events
         where event_sequential_id > ${range.startExclusive}
               and event_sequential_id <= ${range.endInclusive}
