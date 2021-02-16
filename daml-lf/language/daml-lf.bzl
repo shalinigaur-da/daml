@@ -9,7 +9,7 @@ lf_latest_version = "1.11"
 
 # lf_preview_version is non empty if a preview version is available
 # contains at most one version
-lf_preview_version = ["1.12"]
+lf_preview_version = []
 lf_dev_version = "1.dev"
 
 # We generate docs for the latest preview version since releasing
