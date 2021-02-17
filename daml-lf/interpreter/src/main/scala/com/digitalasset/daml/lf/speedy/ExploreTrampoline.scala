@@ -40,8 +40,8 @@ private[lf] object ExploreTrampoline {
     }
   }
 
-  // Convert code to CPS. The type of the final return is polymorphic, but it must be a
-  // Trampoline to allow the Bounce insertion, which is what makes the code stack safe.
+  // Convert eval code to CPS. The type of the final return is polymorphic, but it must be
+  // a Trampoline to allow the Bounce insertion, which is what makes the code stack-safe.
 
   def evalCpsSimTramp[R](e: Exp)(k: Int => SimTramp[R]): SimTramp[R] = {
     SimBounce { () =>
@@ -86,7 +86,7 @@ private[lf] object ExploreTrampoline {
   final case class MonFlatMap[A, B](left: MonTramp[A], f: A => MonTramp[B]) extends MonTramp[B]
 
   // Given these more powerful trampolines, we can avoid explicit passing/calling a
-  // continuation parameter. And we can use for-comprehension syntax if we like.
+  // continuation parameter. Also, we can use for-comprehension syntax if we like.
 
   def evalMonTramp(e: Exp): MonTramp[Int] = {
     MonBounce { () =>
@@ -94,7 +94,6 @@ private[lf] object ExploreTrampoline {
         case Num(num) =>
           MonLand(num)
         case Add(e1, e2) =>
-          val _ = (e1, e2)
           for {
             n1 <- evalMonTramp(e1)
             n2 <- evalMonTramp(e2)
@@ -107,7 +106,7 @@ private[lf] object ExploreTrampoline {
     runMonTramp(evalMonTramp(e))
   }
 
-  // The payback comes here.  It's more tricky to ensure stack-safety when running a
+  // The negative side comes here: It is more tricky to ensure stack-safety when running a
   // monadic trampoline. One approach is to re-associate the Binds during running.
   // https://medium.com/@olxc/trampolining-and-stack-safety-in-scala-d8e86474ddfa
 
