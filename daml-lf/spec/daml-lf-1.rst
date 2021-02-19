@@ -614,7 +614,7 @@ Then we can define our kinds, types, and expressions::
        |  LitParty                                  -- ExpLitParty: Party literal
        |  cid                                       -- ExpLitContractId: Contract identifiers
        |  LitRoundingMode                           -- ExpLitRoundingMode: Rounding Mode
-       |  UnBondedMathContext                       -- ExpUnboundedMathContext: Unlimited Math Context
+       |  UnboundedMathContext                       -- ExpUnboundedMathContext: Unlimited Math Context
        |  BoundedMathContext e₁ e₂                  -- ExpFoundedMathContext: Unlimited Math Context
        |  F                                         -- ExpBuiltin: Builtin function
        |  Mod:W                                     -- ExpVal: Defined value
