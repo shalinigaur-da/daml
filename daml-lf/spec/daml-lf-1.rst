@@ -476,6 +476,17 @@ We now define all the literals that a program can handle::
   Contract ID literals:
         cid   ::= cidV0 | cidV1                      -- LitCid
 
+  Rounding Mode Literals:
+        LitRoundingMode ::=
+          | 'RoundingCeiling'
+          | 'RoundingFloor'
+          | 'RoundingDown'
+          | 'RoundingUp'
+          | 'RoundingHalfDown'
+          | 'RoundingHalfEven'
+          | 'RoundingHalfUp'
+          | 'RoundingHalfUnnecessary'
+
 The literals represent actual Daml-LF values:
 
 * A ``LitNatType`` represents a natural number between ``0`` and
@@ -602,6 +613,9 @@ Then we can define our kinds, types, and expressions::
        |  LitTimestamp                              -- ExpLitTimestamp: UTC timestamp literal
        |  LitParty                                  -- ExpLitParty: Party literal
        |  cid                                       -- ExpLitContractId: Contract identifiers
+       |  LitRoundingMode                           -- ExpLitRoundingMode: Rounding Mode
+       |  UnBondedMathContext                       -- ExpUnboundedMathContext: Unlimited Math Context
+       |  BoundedMathContext e₁ e₂                  -- ExpFoundedMathContext: Unlimited Math Context
        |  F                                         -- ExpBuiltin: Builtin function
        |  Mod:W                                     -- ExpVal: Defined value
        |  Mod:T @τ₁ … @τₙ { f₁ = e₁, …, fₘ = eₘ }   -- ExpRecCon: Record construction
@@ -1112,6 +1126,16 @@ Then we define *well-formed expressions*. ::
       'tpl' (x : T) ↦ { … }  ∈  〚Ξ〛Mod
     ——————————————————————————————————————————————————————————————— ExpLitContractId
       Γ  ⊢  cid  :  'ContractId' Mod:T
+
+    ——————————————————————————————————————————————————————————————— ExpLitRoundingMode
+      Γ  ⊢  LitRoundingMod  :  'RoundingMode'
+
+    ——————————————————————————————————————————————————————————————— ExpUnboundedMathContext
+      Γ  ⊢  'UnBondedMathContext'  :  'MathContext'
+
+      Γ  ⊢  e  :  'RoundingMode'
+    ——————————————————————————————————————————————————————————————— ExpUnboundedMathContext
+      Γ  ⊢  'BondedMathContext' e  :  'MathContext'
 
       τ  ↠  τ'      'val' W : τ ↦ …  ∈  〚Ξ〛Mod
     ——————————————————————————————————————————————————————————————— ExpVal
@@ -1914,37 +1938,16 @@ need to be evaluated further. ::
    ——————————————————————————————————————————————————— ValScenario
      ⊢ᵥ  s
 
-   ——————————————————————————————————————————————————— ValMathCtxUnlimited
-     ⊢ᵥ  'MATHCTX_UNLIMITED'
+   ——————————————————————————————————————————————————— ValUnBondedMathContext
+     ⊢ᵥ  LitRoundingMode
 
-     ⊢ᵥ  r
-     ⊢ᵥ  p
-   ——————————————————————————————————————————————————— ValMathCtxBounded
-     ⊢ᵥ  'MATHCTX_BOUNDED' r p
+   ——————————————————————————————————————————————————— ValUnBondedMathContext
+     ⊢ᵥ  'UnBondedMathContext'
 
-   ——————————————————————————————————————————————————— ValRoundingModeCeiling
-     ⊢ᵥ  'ROUNDING_CEILING'
-
-   ——————————————————————————————————————————————————— ValRoundingModeFloor
-     ⊢ᵥ  'ROUNDING_FLOOR'
-
-   ——————————————————————————————————————————————————— ValRoundingModeDown
-     ⊢ᵥ  'ROUNDING_DOWN'
-
-   ——————————————————————————————————————————————————— ValRoundingModeUp
-     ⊢ᵥ  'ROUNDING_UP'
-
-   ——————————————————————————————————————————————————— ValRoundingModeHalf_Down
-     ⊢ᵥ  'ROUNDING_HALF_DOWN'
-
-   ——————————————————————————————————————————————————— ValRoundingModeHalf_Even
-     ⊢ᵥ  'ROUNDING_HALF_EVEN'
-
-   ——————————————————————————————————————————————————— ValRoundingModeHalf_Up
-     ⊢ᵥ  'ROUNDING_HALF_UP'
-
-   ——————————————————————————————————————————————————— ValRoundingModeHalf_Unnecessary
-     ⊢ᵥ  'ROUNDING_HALF_UNNECESSARY'
+     ⊢ᵥ  e₁
+     ⊢ᵥ  e₂
+   ——————————————————————————————————————————————————— ValUnBondedMathContext
+     ⊢ᵥ  'BoundedMathContext ' e₁ e₂
 
 
                            ┌────────┐
@@ -3662,39 +3665,151 @@ Int64 functions
   in ``Some``. If the input does not match the regexp ``[+-]?\d+`` or
   if the result of the conversion overflows, returns ``None``.
 
+MathContext functions
+~~~~~~~~~~~~~~~~~~~~~
+
+*  ``'MATHCTX_UNLIMITED' : MathContext``
+
+   Returns `'UnBondedMathContext'`
+
+* ``MATHCTX_BOUNDED' : RoundingMode -> Int64 -> MathContext``
+
+   Returns ``'BoundedMathContext' v₁ v₂`` where ``v₁`` and ``v₂`` respectively the first and second argument.
+
+BigDecimal functions
+~~~~~~~~~~~~~~~~~~~~
+
+All operations that take a ``MathContext`` as parameter behave as if
+they first calculate an exact math intermediate result and then round
+this result as specified by the ``MathContext``. For the
+``'UnBondedMathContext'`` math context, all operations are exact. If
+the result cannot be resulted as a ``BigDecimal`` they throw an
+``ArithmeticError`` (TODO:
+https://github.com/digital-asset/daml/issues/8020) For a
+``'BoundedMathContext' roundingMode precision`` math context, the
+result is exact if it can be represented with at most ``precision``
+digits at some scale. If the result cannot be represented exactly in
+at most ``precision`` digits, the result is rounded to ``precision``
+accordingly the ``roundingMode`` as follows:
+
+- ``'RoundingCeiling'`` : Rounds towards positive infinity.
+
+- ``'RoundingFloor'`` : Rounds towards negative infinity
+
+- ``'RoundingDown'`` : Rounds towards towards zero
+
+- ``'RoundingUp'`` : Round towards away from zero
+
+- ``'RoundingHalfDown'`` : Round towards the nearest neighbor unless
+  both neighbors are equidistant, in which case round towards zero.
+
+- ``'RoundingHalfEven'`` : Rounds towards the nearest neighbor unless
+  both neighbors are equidistant, in which case round towards the even
+  neighbor.
+
+- ``'RoundingHalfUp'`` : Round towards the nearest neighbor unless
+  both neighbors are equidistant, in which case round away from zero.
+
+- ``'RoundingUnnecessary'`` : Throw if the exact result cannot be
+  represented.
+
+
+* ``ADD_BIGDECIMAL : 'MathContext' → 'BigDecimal' → 'BigDecimal'  → 'BigDecimal'``
+
+  Adds the two decimals by the second one rounding the result
+  according to the given ``MathContext``.
+
+* ``SUB_BIGDECIMAL : 'MathContext' → 'BigDecimal' → 'BigDecimal' → 'BigDecimal'``
+
+  Subtracts the second big decimal from the first one by the second one rounding the result
+  according to the given ``MathContext``.
+
+* ``MUL_BIGDECIMAL : 'MathContext' → 'BigDecimal' → 'BigDecimal' → 'BigDecimal'``
+
+  Multiplies the two numerics by the second one rounding the result
+  according to the given ``MathContext``.
+
+* ``DIV_BIGDECIMAL : 'MathContext' → 'BigDecimal' → 'BigDecimal' → 'BigDecimal'``
+
+  Divides the first big decimal by the second one rounding the result
+  according to the given ``MathContext``.
+
+* ``ROUND_BIGDECIMAL : 'MathContext' -> 'BigDecimal' -> 'BigDecimal'``
+
+  Round the big decimal according to the given ``MathContext``.
+
+* ``FROM_TEXT_BIGDECIMAL : 'Text' → 'Optional' 'BigDecimal'``
+
+  Given a string representation of a numeric returns the numeric
+  wrapped in ``Some``. If the input does not match the regexp
+  ``[+-]?\d+(\.d+)?`` or if the result of the conversion cannot
+  be mapped into a ``BigDecimal`` without loss of precision, returns
+  ``None``.
+
+* ``TO_TEXT_BIGDECIMAL : 'BigDecimal' → 'Text'``
+
+  Returns the numeric string representation of the BigDecimal. The result
+  will be returned at the smallest precision that can represent the result exactly, i.e.,
+  without any trailing zeroes.
+
+* ``TO_NUMERIC_BIGDECIMAL : ∀ (α : nat). 'RoundingMode' → 'BigDecimal'  → 'Numeric' α``
+
+  Convert the ``BigDecimal`` to a ``Numeric`` value with precision ``α`` according to the given
+  ``RoundingMode``. Throws an error in case of overflow.
+
+* ``'TO_BIGDECIMAL_NUMERIC' : ∀ (α : nat). 'MathContext' → 'Numeric' α  → 'BigDecimal'``
+
+  Convert the ``Numeric`` to a ``BigDecimal`` according to the given ``MathContext``.
+
 Numeric functions
 ~~~~~~~~~~~~~~~~~
 
 * ``ADD_NUMERIC : ∀ (α : nat) . 'Numeric' α → 'Numeric' α  → 'Numeric' α``
 
-  Adds the two decimals.  The scale of the inputs and the output is
-  given by the type parameter `α`.  Throws an error in case of
-  overflow.
+   Shortcut for::
+
+      'ADD_NUMERIC' ≡
+        Λ α : ⋆. λ x : 'Numeric' α . λ : 'Numeric' α .
+	        let x' = 'TO_BIGDECIMAL_NUMERIC' α 'UnBondedMathContext' x in
+            let y' = 'TO_BIGDECIMAL_NUMERIC' α 'UnBondedMathContext' y in
+            let r  = ``ADD_BIGDECIMAL`` 'UnBondedMathContext' x' y' in
+            'TO_NUMERIC_BIGDECIMAL' α RoundingHalfEven r
+
 
 * ``SUB_NUMERIC : ∀ (α : nat) . 'Numeric' α → 'Numeric' α → 'Numeric' α``
 
-  Subtracts the second decimal from the first one.  The
-  scale of the inputs and the output is given by the type parameter
-  `α`.  Throws an error if overflow.
+  Shortcut for::
+
+      'SUB_NUMERIC' ≡
+        Λ α : ⋆. λ x : 'Numeric' α . λ : 'Numeric' α .
+	        let x' = 'TO_BIGDECIMAL_NUMERIC' α 'UnBondedMathContext' x in
+            let y' = 'TO_BIGDECIMAL_NUMERIC' α 'UnBondedMathContext' y in
+            let r  = ``SUB_BIGDECIMAL`` 'UnBondedMathContext' x' y' in
+            'TO_NUMERIC_BIGDECIMAL' α RoundingHalfEven r
 
 * ``MUL_NUMERIC : ∀ (α₁ α₂ α : nat) . 'Numeric' α₁ → 'Numeric' α₂ → 'Numeric' α``
 
-  Multiplies the two numerics and rounds the result to the closest
-  multiple of ``10⁻ᵅ`` using `banker's rounding convention
-  <https://en.wikipedia.org/wiki/Rounding#Round_half_to_even>`_.
-  The type parameters `α₁`, `α₂`, `α` define the scale of the first
-  input, the second input, and the output, respectively. Throws an
-  error in case of overflow.
+ Shortcut for::
+
+      'MUL_NUMERIC' ≡
+        Λ α₁ : ⋆.  Λ α₂ : ⋆. Λ α : ⋆. λ x : 'Numeric' α₁ . λ : 'Numeric' α₂ .
+	        let x' = 'TO_BIGDECIMAL_NUMERIC' α₁ 'UnBondedMathContext' x in
+            let y' = 'TO_BIGDECIMAL_NUMERIC' α₂ 'UnBondedMathContext' y in
+            let r  = ``MUL_BIGDECIMAL`` 'UnBondedMathContext' x' y' in
+            'TO_NUMERIC_BIGDECIMAL' α RoundingHalfEven r
 
 * ``DIV_NUMERIC : ∀ (α₁ α₂ α : nat) . 'Numeric' α₁ → 'Numeric' α₂ → 'Numeric' α``
 
-  Divides the first decimal by the second one and rounds the result to
-  the closest multiple of ``10⁻ᵅ`` using `banker's rounding convention
-  <https://en.wikipedia.org/wiki/Rounding#Round_half_to_even>`_ (where
-  `n` is given as the type parameter).  The type parameters `α₁`,
-  `α₂`, `α` define the scale of the first input, the second input, and
-  the output, respectively. Throws an error in case of overflow.
+      'DIV_NUMERIC' ≡
+        Λ α₁ : ⋆.  Λ α₂ : ⋆. Λ α : ⋆. λ x : 'Numeric' α₁ . λ : 'Numeric' α₂ .
+	        let x' = 'TO_BIGDECIMAL_NUMERIC' α₁ 'UnBondedMathContext' x in
+            let y' = 'TO_BIGDECIMAL_NUMERIC' α₂ 'UnBondedMathContext' y in
+            let r  = ``DIV_BIGDECIMAL`` 'UnBondedMathContext' x' y' in
+            'TO_NUMERIC_BIGDECIMAL' α RoundingHalfEven r
 
+
+.. TODO https://github.com/digital-asset/daml/issues/8719
+   express other operation as BigDecimal operation.
 
 * ``CAST_NUMERIC : ∀ (α₁, α₂: nat) . 'Numeric' α₁ → 'Numeric' α₂``
 
@@ -3753,114 +3868,6 @@ Numeric functions
   be mapped into a decimal without loss of precision, returns
   ``None``.  The scale of the output is given by the type parameter
   `α`.
-
-MathContext functions
-~~~~~~~~~~~~~~~~~~~~~
-
-*  ``'MATHCTX_UNLIMITED' : MathContext``
-
-   Unlimited precision
-
-* ``MATHCTX_BOUNDED' : RoundingMode -> Int64 -> MathContext``
-
-  Round to the given precision using the given rounding mode. Throws if the precision is not between 0 and 2³¹-1
-
-RoundingMode functions
-~~~~~~~~~~~~~~~~~~~~~~
-
-* ``'ROUNDING_CEILING' : RoundingMode``
-
-  Round towards positive infinity.
-
-* ``'ROUNDING_FLOOR' : RoundingMode``
-
-  Round towards negative infinity
-
-* ``'ROUNDING_DOWN' : RoundingMode``
-
-  Round towards towards zero
-
-* ``'ROUNDING_UP' : RoundingMode``
-
-  Round towards away from zero
-
-* ``'ROUNDING_HALF_DOWN' : RoundingMode``
-
-  Round towards the nearest neighbor unless both neighbors are equidistant, in which case round towards zero.
-
-* ``'ROUNDING_HALF_EVEN' : RoundingMode``
-
-  Round towards the nearest neighbor unless both neighbors are equidistant, in which case round towards the even neighbor.
-
-* ``'ROUNDING_HALF_UP' : RoundingMode``
-
-  Round towards the nearest neighbor unless both neighbors are equidistant, in which case round away from zero.
-
-* ``'ROUNDING_UNNECESSARY' : RoundingMode``
-
-  Throw if the exact result cannot be represented.
-
-BigDecimal functions
-~~~~~~~~~~~~~~~~~~~~
-
-All operations behave as if they first calculate an exact
-math intermediate result and then round this result as specified by
-the ``MathContext``. For an ``UNLIMITED`` math context, all operations
-are exact. If the result cannot be resulted as a ``BigDecimal`` they
-throw an ``ArithmeticError``
-(TODO: https://github.com/digital-asset/daml/issues/8020). For a
-``MATHCTX_BOUNDED roundingMode precision`` math context, the result is exact if it can
-be represented at with at most ``precision`` digits at some scale. If
-the result cannot be represented exactly in at most ``precision``
-digits, the ``precision`` digits in the result are selected according
-to ``roundingMode``.
-
-* ``ADD_BIGDECIMAL : 'MathContext' → 'BigDecimal' → 'BigDecimal'  → 'BigDecimal'``
-
-  Adds the two decimals by the second one rounding the result
-  according to the given ``MathContext``.
-
-* ``SUB_BIGDECIMAL : 'MathContext' → 'BigDecimal' → 'BigDecimal' → 'BigDecimal'``
-
-  Subtracts the second big decimal from the first one by the second one rounding the result
-  according to the given ``MathContext``.
-
-* ``MUL_BIGDECIMAL : 'MathContext' → 'BigDecimal' → 'BigDecimal' → 'BigDecimal'``
-
-  Multiplies the two numerics by the second one rounding the result
-  according to the given ``MathContext``.
-
-* ``DIV_BIGDECIMAL : 'MathContext' → 'BigDecimal' → 'BigDecimal' → 'BigDecimal'``
-
-  Divides the first big decimal by the second one rounding the result
-  according to the given ``MathContext``.
-
-* ``ROUND_BIGDECIMAL : 'MathContext' -> 'BigDecimal' -> 'BigDecimal'``
-
-  Round the big decimal according to the given ``MathContext``.
-
-* ``FROM_TEXT_BIGDECIMAL : 'Text' → 'Optional' 'BigDecimal'``
-
-  Given a string representation of a numeric returns the numeric
-  wrapped in ``Some``. If the input does not match the regexp
-  ``[+-]?\d+(\.d+)?`` or if the result of the conversion cannot
-  be mapped into a ``BigDecimal`` without loss of precision, returns
-  ``None``.
-
-* ``TO_TEXT_BIGDECIMAL : 'BigDecimal' → 'Text'``
-
-  Returns the numeric string representation of the bigdecimal. The result
-  will be returned at the smallest precision that can represent the result exactly, i.e.,
-  without any trailing zeroes.
-
-* ``TO_NUMERIC_BIGDECIMAL : ∀ (α : nat). 'RoundingMode' → 'BigDecimal'  → 'Numeric' α``
-
-  Convert the ``BigDecimal`` to a ``Numeric`` value with precision ``α`` according to the given
-  ``RoundingMode``.
-
-* ``TO_BIGDECIMAL_NUMERIC : ∀ (α : nat). 'MathContext' → 'Numeric' α  → 'BigDecimal'``
-
-  Convert the ``Numeric`` to a ``BigDecimal`` according to the given ``MathContext``.
 
 String functions
 ~~~~~~~~~~~~~~~~
@@ -4831,6 +4838,22 @@ program exception using
   ``MAKE_ARITHMETIC_ERROR``, ``MAKE_CONTRACT_ERROR``,
   ``ANY_EXCEPTION_MESSAGE``, ``GENERAL_ERROR_MESSAGE``, or
   ``ARITHMETIC_ERROR_MESSAGE`.
+
+BigDecimal
+..........
+
+Daml-LF 1.7 is the first version that supports BigDecimal.
+
+The program serialization format does not provide any direct way to
+encode `MathContext`. Daml-LF programs can create such
+objects only dynamically using the `MathContext functions`_.
+
+The deserialization process will reject any Daml-LF 1.11 (or earlier)
+program exception using:
+
+.. TODO https://github.com/digital-asset/daml/issues/8719
+
+
 
 
 
